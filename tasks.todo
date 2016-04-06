@@ -1,0 +1,8 @@
+☐ clang-format code
+Serial:
+    ☐ Tile insertion
+    ☐ Refactor code in random_insert
+    ☐ Refactor code in random_access
+Parallel:
+
+GPU:

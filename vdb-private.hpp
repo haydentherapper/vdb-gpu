@@ -1,5 +1,5 @@
 /**
- * \file vdb.cpp
+ * \file vdb-private.hpp
  * \brief
  *
  * \author Hayden Blauzvern
@@ -11,12 +11,11 @@
 #include <limits>
 #include <array>
 #include <iostream>
+#include <stdlib.h>
 
 #include "coord.hpp"
 #include "utils.hpp"
 #include "vdb.hpp"
-
-// TODO: Clang-format code
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 VDB<level0, level1, level2>::VDB(uint64_t mem_size,
@@ -49,10 +48,7 @@ void VDB<level0, level1, level2>::initialize_hashmap()
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 void VDB<level0, level1, level2>::initialize_vdb_storage()
 {
-    memset(vdb_storage_, 0, total_storage_size_);
-    // for (uint64_t i = HASHMAP_START + HASHMAP_SIZE; i < total_storage_size_; ++i) {
-    //     vdb_storage_[i].index = 0;
-    // }
+    memset(vdb_storage_, 0, total_storage_size_ * sizeof(InternalData));
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
@@ -153,7 +149,8 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
         // Node does not exist, insert into hashmap to update parent
         bool result = insert_node_into_hashmap(xyz, num_elements_);
         if (!result) {
-            // TODO: Error inserting, do something
+            std::cout << "Not enough room in hashtable, exiting" << std::endl;
+            exit(EXIT_FAILURE);
         }
         // Update child
         insert_internal_node(num_elements_, level2_node);
@@ -179,7 +176,6 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
     InternalData& value_mask_chunk_2 = *value_mask;
     InternalData& child_mask_chunk_2 = *child_mask;
-    // TODO: Change this to not be a reference
 
     uint64_t mask_offset = internal_offset % INTERNAL_DATA_SIZE;
     if (!extract_bit(child_mask_chunk_2.index, mask_offset)) {
@@ -251,6 +247,7 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
         uint64_t index = (Coord::hash(rootkey, HASHMAP_LOG_SIZE) + i * i)
                         % HASHMAP_SIZE;
         if (vdb_storage_[index].index != std::numeric_limits<uint64_t>::max()) {
+            // TODO: check xyz coordinate stuffed together (each 2^20) before returning
             return vdb_storage_[index];
         }
     }
@@ -268,6 +265,7 @@ bool VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, uint
         uint64_t index = (Coord::hash(rootkey, HASHMAP_LOG_SIZE) + i * i)
                         % HASHMAP_SIZE;
         if (vdb_storage_[index].index == std::numeric_limits<uint64_t>::max()) {
+            // TODO: insert xyz coordinate stuffed together (each 2^20)
             vdb_storage_[index].index = node_index;
             return true;
         }
@@ -343,6 +341,3 @@ uint64_t VDB<level0, level1, level2>::calculate_leaf_offset(const Coord xyz) {
 }
 
 #endif /* end of include guard: VDB_PRIVATE_HPP_INCLUDED */
-
-// TODO: Tile insert
-// TODO: Refactor code with functions for repeated code in access/insert

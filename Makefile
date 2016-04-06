@@ -1,5 +1,5 @@
 #
-# Makefile for CS 70 Spell Checking Assignment
+# Makefile for vdb-gpu
 #
 
 # ----- Make Macros -----

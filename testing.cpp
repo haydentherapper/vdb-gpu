@@ -12,6 +12,7 @@ int main() {
     std::mt19937 rand_engine(rand_dev());
 
     VDB<3, 4, 5> vdb_square(256*256*256, 2000, 10.0);
+    // pragma omp parallal for collapse(3)
     for (size_t i = 0; i < 16; ++i) {
         for (size_t j = 0; j < 16; ++j) {
             for (size_t k = 0; k < 16; ++k) {
