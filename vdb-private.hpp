@@ -242,13 +242,22 @@ template<uint64_t level0, uint64_t level1, uint64_t level2>
 InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
 {
     std::array<int, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
-    for (uint64_t i = HASHMAP_START;
-            i < HASHMAP_START + HASHMAP_SIZE; ++i) {
-        uint64_t index = (Coord::hash(rootkey, HASHMAP_LOG_SIZE) + i * i)
-                        % HASHMAP_SIZE;
+    uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);
+    uint64_t compressed_xyz = xyz.get_compressed_coord(LEVEL2_sLOG2);
+    uint64_t size_of_axis = 20 - LEVEL2_sLOG2; // Likely 8
+    uint64_t amount_to_pad = 64 - (size_of_axis * 3); // Likely 40
+    for (uint64_t i = HASHMAP_START; i < HASHMAP_START + HASHMAP_SIZE; ++i) {
+        uint64_t index = (hash + i * i) % HASHMAP_SIZE;
         if (vdb_storage_[index].index != std::numeric_limits<uint64_t>::max()) {
-            // TODO: check xyz coordinate stuffed together (each 2^20) before returning
-            return vdb_storage_[index];
+            // Compare to compressed_xyz to find correct hashmap value
+            uint64_t compressed_xyz_index = vdb_storage_[index].index;
+            if (((compressed_xyz_index >> amount_to_pad) << amount_to_pad) ==
+                ((compressed_xyz >> amount_to_pad) << amount_to_pad)) {
+                // Extract last 40 bits
+                InternalData ret;
+                ret.index = compressed_xyz_index & ((1L << amount_to_pad) - 1);
+                return ret;
+            }
         }
     }
     InternalData ret;
@@ -260,13 +269,16 @@ template<uint64_t level0, uint64_t level1, uint64_t level2>
 bool VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, uint64_t node_index)
 {
     std::array<int, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
-    for (uint64_t i = HASHMAP_START;
-            i < HASHMAP_START + HASHMAP_SIZE; ++i) {
-        uint64_t index = (Coord::hash(rootkey, HASHMAP_LOG_SIZE) + i * i)
-                        % HASHMAP_SIZE;
+    uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);
+    uint64_t compressed_xyz = xyz.get_compressed_coord(LEVEL2_sLOG2);
+    // Compress coord with node_index
+    uint64_t size_of_axis = 20 - LEVEL2_sLOG2; // Likely 8
+    uint64_t amount_to_pad = 64 - (size_of_axis * 3); // Likely 40
+    uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + node_index;
+    for (uint64_t i = HASHMAP_START; i < HASHMAP_START + HASHMAP_SIZE; ++i) {
+        uint64_t index = (hash + i * i) % HASHMAP_SIZE;
         if (vdb_storage_[index].index == std::numeric_limits<uint64_t>::max()) {
-            // TODO: insert xyz coordinate stuffed together (each 2^20)
-            vdb_storage_[index].index = node_index;
+            vdb_storage_[index].index = compressed_xyz_index;
             return true;
         }
     }
@@ -324,19 +336,19 @@ uint64_t VDB<level0, level1, level2>::calculate_internal_offset(const Coord xyz,
             childSLog2 = LEVEL0_sLOG2;
     }
     uint64_t internalOffset =
-          (((xyz.x_ & (1 << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
-          (((xyz.y_ & (1 << sLog2) - 1) >> childSLog2) << log2) +
-           ((xyz.z_ & (1 << sLog2) - 1) >> childSLog2);
+          (((xyz.x_ & (1L << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
+          (((xyz.y_ & (1L << sLog2) - 1) >> childSLog2) << log2) +
+           ((xyz.z_ & (1L << sLog2) - 1) >> childSLog2);
     return internalOffset;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 uint64_t VDB<level0, level1, level2>::calculate_leaf_offset(const Coord xyz) {
     uint64_t leafOffset =
-          ((xyz.x_ & (1 << LEVEL0_sLOG2) - 1)
+          ((xyz.x_ & (1L << LEVEL0_sLOG2) - 1)
                 << (LEVEL0_LOG2 + LEVEL0_LOG2)) +
-          ((xyz.y_ & (1 << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
-           (xyz.z_ & (1 << LEVEL0_sLOG2) - 1);
+          ((xyz.y_ & (1L << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
+           (xyz.z_ & (1L << LEVEL0_sLOG2) - 1);
     return leafOffset;
 }
 

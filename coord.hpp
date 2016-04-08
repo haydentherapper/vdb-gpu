@@ -10,6 +10,7 @@
 #define COORD_HPP_INCLUDED
 
 #include <array>
+#include <iostream>
 
 struct Coord {
 
@@ -29,12 +30,24 @@ struct Coord {
                  z_ & ~((1 << level2_slog2) - 1)}};
     }
 
+    uint64_t get_compressed_coord(uint64_t compressed) const {
+        // Divide number of bits by number of axes to get compressed size
+        uint64_t size_of_axis = 20 - compressed; // Likely 8
+        uint64_t amount_to_pad = 64 - (size_of_axis * 3); // Likely 40
+        uint64_t padding = (1L << amount_to_pad) - 1;
+        // Each coordinate is at most 2^20, so right-shift by compressed
+        return ((x_ >> compressed) << (amount_to_pad + size_of_axis * 2)) +
+               ((y_ >> compressed) << (amount_to_pad + size_of_axis)) +
+               ((z_ >> compressed) << amount_to_pad) +
+               padding;
+    }
+
     static uint64_t hash(std::array<int, 3> rootkey,
                          uint64_t hashmap_log_size) {
-        return ((1 << hashmap_log_size) - 1) &
-                    (rootkey[0] * 73856093 ^
-                     rootkey[1] * 19349663 ^
-                     rootkey[2] * 83492791);
+        return ((1L << hashmap_log_size) - 1) &
+                    (rootkey[0] * 73856093L ^
+                     rootkey[1] * 19349663L ^
+                     rootkey[2] * 83492791L);
     }
 };
 
