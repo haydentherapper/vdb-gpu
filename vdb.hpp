@@ -67,8 +67,10 @@ public:
     /// Index into vdb_storage where hashmap starts
     const uint64_t HASHMAP_START = 0;
 
+    /// Background value for VDB, returned when voxel value has not been set
     const double BACKGROUND_VALUE;
 
+    /// Keeps track of how many internal datas have been "allocated"
     uint64_t num_elements_;
 
     /// Disabled default constructor

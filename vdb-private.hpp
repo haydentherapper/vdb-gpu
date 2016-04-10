@@ -11,7 +11,8 @@
 #include <limits>
 #include <array>
 #include <iostream>
-#include <stdlib.h>
+#include <cstdlib>
+#include <cstring> // memset
 
 #include "coord.hpp"
 #include "utils.hpp"
@@ -127,7 +128,7 @@ double VDB<level0, level1, level2>::random_access(const Coord xyz)
     InternalData leaf_node_index =
         *(leaf_node_array_pointer + leaf_offset);
     // Isn't currently used, tracks active states
-    value_mask = internal_node_array_pointer +
+    value_mask = leaf_node_array_pointer +
                  // Length of node array
                  LEVEL0_sSIZE;
     value_mask += leaf_offset / INTERNAL_DATA_SIZE;
@@ -209,7 +210,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     InternalData& child_mask_chunk_1 = *child_mask;
     mask_offset = internal_offset % INTERNAL_DATA_SIZE;
     if (!extract_bit(child_mask_chunk_1.index, mask_offset)) {
-        // No internal node child, add an internal node
+        // No leaf node child, add a leaf node
         // Update child
         insert_leaf_node(num_elements_);
         // Update parent's node index, value mask, and child mask
@@ -227,7 +228,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     InternalData& leaf_node_index =
         *(leaf_node_array_pointer + leaf_offset);
     // Isn't currently used, tracks active states
-    value_mask = internal_node_array_pointer +
+    value_mask = leaf_node_array_pointer +
                        // Length of node array
                        LEVEL0_sSIZE;
     value_mask += leaf_offset / INTERNAL_DATA_SIZE;
@@ -255,7 +256,7 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
                 ((compressed_xyz >> amount_to_pad) << amount_to_pad)) {
                 // Extract last 40 bits
                 InternalData ret;
-                ret.index = compressed_xyz_index & ((1L << amount_to_pad) - 1);
+                ret.index = compressed_xyz_index & ((1LU << amount_to_pad) - 1);
                 return ret;
             }
         }
@@ -277,6 +278,16 @@ bool VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, uint
     uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + node_index;
     for (uint64_t i = HASHMAP_START; i < HASHMAP_START + HASHMAP_SIZE; ++i) {
         uint64_t index = (hash + i * i) % HASHMAP_SIZE;
+        // uint64_t expected(std::numeric_limits<uint64_t>::max());
+        // // TODO: How do you load vdb_storage+index to do the compare?
+        // // Atomic per function? Shared_ptr? Class variable?
+        // //std::shared_ptr<InternalData> shared(vdb_storage_ + index);
+        // uint64_t old_val = __sync_val_compare_and_swap(reinterpret_cast<uint64_t*>(vdb_storage_+index), expected, compressed_xyz);
+        // // if (success)
+        // //
+        // // }
+
+
         if (vdb_storage_[index].index == std::numeric_limits<uint64_t>::max()) {
             vdb_storage_[index].index = compressed_xyz_index;
             return true;
@@ -336,19 +347,19 @@ uint64_t VDB<level0, level1, level2>::calculate_internal_offset(const Coord xyz,
             childSLog2 = LEVEL0_sLOG2;
     }
     uint64_t internalOffset =
-          (((xyz.x_ & (1L << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
-          (((xyz.y_ & (1L << sLog2) - 1) >> childSLog2) << log2) +
-           ((xyz.z_ & (1L << sLog2) - 1) >> childSLog2);
+          (((xyz.x_ & (1LU << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
+          (((xyz.y_ & (1LU << sLog2) - 1) >> childSLog2) << log2) +
+           ((xyz.z_ & (1LU << sLog2) - 1) >> childSLog2);
     return internalOffset;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 uint64_t VDB<level0, level1, level2>::calculate_leaf_offset(const Coord xyz) {
     uint64_t leafOffset =
-          ((xyz.x_ & (1L << LEVEL0_sLOG2) - 1)
+          ((xyz.x_ & (1LU << LEVEL0_sLOG2) - 1)
                 << (LEVEL0_LOG2 + LEVEL0_LOG2)) +
-          ((xyz.y_ & (1L << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
-           (xyz.z_ & (1L << LEVEL0_sLOG2) - 1);
+          ((xyz.y_ & (1LU << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
+           (xyz.z_ & (1LU << LEVEL0_sLOG2) - 1);
     return leafOffset;
 }
 
