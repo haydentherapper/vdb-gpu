@@ -4,5 +4,6 @@ Serial:
     ☐ Refactor code in random_insert
     ☐ Refactor code in random_access
 Parallel:
-
+    ☐ Integrate gcc builtins
 GPU:
+    ☐ Port code to cuda

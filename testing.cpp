@@ -26,7 +26,4 @@ int main() {
             }
         }
     }
-    // const Coord coord(100, 100, 100);
-    // double val = vdb_square.random_access(coord);
-    // std::cout << val << std::endl;
 }

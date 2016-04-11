@@ -148,16 +148,12 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     InternalData index = get_node_from_hashmap(xyz);
     if (index.tile_or_value == BACKGROUND_VALUE) {
         // Node does not exist, insert into hashmap to update parent
-        bool result = insert_node_into_hashmap(xyz, num_elements_);
-        if (!result) {
+        uint64_t result = insert_node_into_hashmap(xyz, num_elements_);
+        if (result == 0) {
             std::cout << "Not enough room in hashtable, exiting" << std::endl;
             exit(EXIT_FAILURE);
         }
-        // Update child
-        insert_internal_node(num_elements_, level2_node);
-        index.index = num_elements_;
-        // Update vdb_storage index
-        num_elements_ += LEVEL2_TOTAL_SIZE;
+        index.index = result;
     }
 
     // Pointer to first index into internal data array
@@ -181,8 +177,6 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     uint64_t mask_offset = internal_offset % INTERNAL_DATA_SIZE;
     if (!extract_bit(child_mask_chunk_2.index, mask_offset)) {
         // No internal node child, add an internal node
-        // Update child
-        insert_internal_node(num_elements_, level1_node);
         // Update parent's node index, value mask, and child mask
         internal_node_index_2.index = num_elements_;
         update_bit(value_mask_chunk_2.index, mask_offset);
@@ -211,8 +205,6 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     mask_offset = internal_offset % INTERNAL_DATA_SIZE;
     if (!extract_bit(child_mask_chunk_1.index, mask_offset)) {
         // No leaf node child, add a leaf node
-        // Update child
-        insert_leaf_node(num_elements_);
         // Update parent's node index, value mask, and child mask
         internal_node_index_1.index = num_elements_;
         update_bit(value_mask_chunk_1.index, mask_offset);
@@ -267,69 +259,42 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
-bool VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, uint64_t node_index)
+uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, uint64_t num_elements)
 {
     std::array<int, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
     uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);
     uint64_t compressed_xyz = xyz.get_compressed_coord(LEVEL2_sLOG2);
-    // Compress coord with node_index
+    // Compress coord with num_elements
     uint64_t size_of_axis = 20 - LEVEL2_sLOG2; // Likely 8
     uint64_t amount_to_pad = 64 - (size_of_axis * 3); // Likely 40
-    uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + node_index;
+    uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + num_elements;
     for (uint64_t i = HASHMAP_START; i < HASHMAP_START + HASHMAP_SIZE; ++i) {
         uint64_t index = (hash + i * i) % HASHMAP_SIZE;
-        // uint64_t expected(std::numeric_limits<uint64_t>::max());
-        // // TODO: How do you load vdb_storage+index to do the compare?
-        // // Atomic per function? Shared_ptr? Class variable?
-        // //std::shared_ptr<InternalData> shared(vdb_storage_ + index);
-        // uint64_t old_val = __sync_val_compare_and_swap(reinterpret_cast<uint64_t*>(vdb_storage_+index), expected, compressed_xyz);
-        // // if (success)
-        // //
-        // // }
-
-
-        if (vdb_storage_[index].index == std::numeric_limits<uint64_t>::max()) {
-            vdb_storage_[index].index = compressed_xyz_index;
-            return true;
+        uint64_t expected(std::numeric_limits<uint64_t>::max());
+        // Use gcc builtin CAS. We must cast the union for the CAS to work.
+        // Atomically update storage. We place a temporary value as a lock.
+        uint64_t old_val = __sync_val_compare_and_swap(reinterpret_cast<uint64_t*>(vdb_storage_+index), expected, compressed_xyz);
+        // Update index
+        if (old_val == expected) {
+            // Atomically update vdb_storage index
+            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL2_TOTAL_SIZE);
+            // TODO: Double check compressed_xyz_index contains old_num_elements
+            // Atomically exchange storage value. compressed_xyz_index contains old_num_elements
+            __sync_lock_test_and_set(reinterpret_cast<uint64_t*>(vdb_storage_+index), compressed_xyz_index);
+            return old_num_elements;
         }
+        // Spin if we should be storing a value but another thread is.
+        if (((old_val >> amount_to_pad) << amount_to_pad) ==
+            ((compressed_xyz >> amount_to_pad) << amount_to_pad)) {
+            uint64_t mask = (1LU << amount_to_pad) - 1;
+            while ((old_val & mask) == mask) {
+                old_val = vdb_storage_[index].index;
+            }
+            return (old_val & mask);
+        } // Else, index is occupied and we should continue
     }
-    return false;
-}
-
-template<uint64_t level0, uint64_t level1, uint64_t level2>
-void VDB<level0, level1, level2>::insert_internal_node(uint64_t index, InternalNodeLevel inl)
-{
-    uint64_t size;
-    uint64_t mask_size;
-    switch (inl) {
-        case level2_node:
-            size = LEVEL2_sSIZE;
-            mask_size = LEVEL2_MASK_SIZE;
-        case level1_node:
-            size = LEVEL1_sSIZE;
-            mask_size = LEVEL1_MASK_SIZE;
-    }
-    InternalData* internal_node_array_begin = vdb_storage_ + index;
-    InternalData* value_mask = internal_node_array_begin +
-                               // Length of node array
-                               size;
-    // memset(value_mask, 0, sizeof(InternalData));
-    InternalData* child_mask = internal_node_array_begin +
-                               // Length of node array
-                               size +
-                               // Length of value mask
-                               mask_size;
-    // memset(child_mask, 0, sizeof(InternalData));
-}
-
-template<uint64_t level0, uint64_t level1, uint64_t level2>
-void VDB<level0, level1, level2>::insert_leaf_node(uint64_t index)
-{
-    InternalData* internal_node_array_begin = vdb_storage_ + index;
-    InternalData* value_mask = internal_node_array_begin +
-                               // Length of node array
-                               LEVEL0_sSIZE;
-    // memset(value_mask, 0, sizeof(InternalData));
+    // Error, return 0 and end program
+    return 0;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>

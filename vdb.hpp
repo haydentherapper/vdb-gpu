@@ -105,11 +105,8 @@ private:
     /// Will return null if no node exists at coordinates
     InternalData get_node_from_hashmap(const Coord xyz);
 
-    bool insert_node_into_hashmap(const Coord xyz, uint64_t node_index);
-
-    void insert_internal_node(uint64_t index, InternalNodeLevel inl);
-
-    void insert_leaf_node(uint64_t index);
+    /// Inserts internal node index into hashmap atomically
+    uint64_t insert_node_into_hashmap(const Coord xyz, uint64_t node_index);
 
     /// Returns index into internal node array
     uint64_t calculate_internal_offset(const Coord xyz, InternalNodeLevel inl);
