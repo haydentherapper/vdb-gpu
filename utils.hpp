@@ -12,14 +12,8 @@
 
 bool extract_bit(uint64_t index, uint64_t offset) {
     uint64_t constant = 1 << offset;
-
     // return if the nth bit is set
     return index & constant;
-}
-
-void update_bit(uint64_t& index, uint64_t offset) {
-    uint64_t constant = 1 << offset;
-    index |= constant;
 }
 
 #endif /* end of include guard: UTILS_HPP_INCLUDED */

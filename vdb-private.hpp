@@ -171,19 +171,23 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
                                LEVEL2_MASK_SIZE;
     value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
     child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    InternalData& value_mask_chunk_2 = *value_mask;
-    InternalData& child_mask_chunk_2 = *child_mask;
 
+    InternalData& child_mask_chunk_2 = *child_mask;
     uint64_t mask_offset = internal_offset % INTERNAL_DATA_SIZE;
     if (!extract_bit(child_mask_chunk_2.index, mask_offset)) {
         // No internal node child, add an internal node
-        // Update parent's node index, value mask, and child mask
-        internal_node_index_2.index = num_elements_;
-        update_bit(value_mask_chunk_2.index, mask_offset);
-        update_bit(child_mask_chunk_2.index, mask_offset);
-        // Update vdb_storage index
-        num_elements_ += LEVEL1_TOTAL_SIZE;
-    }
+        uint8_t old_lock_val = __sync_lock_test_and_set(IP, lock_flag_array_2[mask_offset]);
+        if (old_lock_val == READY) {
+            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL1_TOTAL_SIZE);
+            // TODO: Double check this will store the old num elems for all threads to read
+            internal_node_index_2.index = old_num_elements;
+            uint64_t constant = 1 << mask_offset;
+            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
+            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
+            lock_array_flag_2[mask_offset] = READY;
+        } // Else, allocation already in progress
+    } // Else, spin until ready
+    while(lock_flag_array_2[mask_offset] == IP);
 
     // Recurse on level 1 internal node
     index.index = internal_node_index_2.index;
@@ -200,18 +204,23 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
                LEVEL1_MASK_SIZE;
     value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
     child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    InternalData& value_mask_chunk_1 = *value_mask;
+
     InternalData& child_mask_chunk_1 = *child_mask;
     mask_offset = internal_offset % INTERNAL_DATA_SIZE;
     if (!extract_bit(child_mask_chunk_1.index, mask_offset)) {
         // No leaf node child, add a leaf node
-        // Update parent's node index, value mask, and child mask
-        internal_node_index_1.index = num_elements_;
-        update_bit(value_mask_chunk_1.index, mask_offset);
-        update_bit(child_mask_chunk_1.index, mask_offset);
-        // Update vdb_storage index
-        num_elements_ += LEVEL0_TOTAL_SIZE;
-    }
+        uint8_t old_lock_val = __sync_lock_test_and_set(IP, lock_flag_array_1[mask_offset]);
+        if (old_lock_val == READY) {
+            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL0_TOTAL_SIZE);
+            // TODO: Double check this will store the old num elems for all threads to read
+            internal_node_index_1.index = old_num_elements;
+            uint64_t constant = 1 << mask_offset;
+            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
+            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
+            lock_flag_array_1[mask_offset] = READY;
+        } // Else, allocation already in progress
+    } // Else, spin until ready
+    while(lock_flag_array_1[mask_offset] == IP);
 
     // Extract index to leaf node
     uint64_t leaf_pointer_index = internal_node_index_1.index;
@@ -224,10 +233,11 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
                        // Length of node array
                        LEVEL0_sSIZE;
     value_mask += leaf_offset / INTERNAL_DATA_SIZE;
-    InternalData& value_mask_chunk_0 = *value_mask;
     uint64_t value_mask_offset = leaf_offset % INTERNAL_DATA_SIZE;
+    // Multiple threads can update this, the last update wins
     leaf_node_index.tile_or_value = value;
-    update_bit(value_mask_chunk_0.index, value_mask_offset);
+    uint64_t constant = 1 << value_mask_offset;
+    __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
     return true;
 }
 
