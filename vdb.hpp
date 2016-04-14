@@ -14,8 +14,9 @@
 #include "coord.hpp"
 
 union InternalData {
-    uint64_t index; //
-    double tile_or_value; // tile or Value
+    uint64_t index; // Index into vdb storage
+    double tile_or_value; // Tile or Value
+    uint8_t lock_flags[sizeof(double)]; // Locks for node insertion
 };
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
@@ -23,8 +24,8 @@ class VDB {
 public:
     enum InternalNodeLevel { level2_node, level1_node };
 
-    const uint8_t READY = 1;
-    const uint8_t IP = 2;
+    const uint8_t READY = 0;
+    const uint8_t IP = 1;
 
     const size_t total_storage_size_;
     InternalData* vdb_storage_;
@@ -57,10 +58,18 @@ public:
     const uint64_t LEVEL1_MASK_SIZE = LEVEL1_sSIZE / INTERNAL_DATA_SIZE;
     /// Size of leaf node value mask
     const uint64_t LEVEL0_MASK_SIZE = LEVEL0_sSIZE / INTERNAL_DATA_SIZE;
+
+    /// Number of lock flags per InternalData
+    const uint64_t NUM_LOCK_FLAGS = sizeof(InternalData);
+    /// Size of level 2 lock flag array
+    const uint64_t LEVEL2_LOCK_ARRAY_SIZE = LEVEL2_sSIZE / NUM_LOCK_FLAGS;
+    /// Size of level 1 lock flag array
+    const uint64_t LEVEL1_LOCK_ARRAY_SIZE = LEVEL1_sSIZE / NUM_LOCK_FLAGS;
+
     /// Total size of level 2 internal node
-    const uint64_t LEVEL2_TOTAL_SIZE = LEVEL2_sSIZE + LEVEL2_MASK_SIZE * 2;
+    const uint64_t LEVEL2_TOTAL_SIZE = LEVEL2_sSIZE + LEVEL2_MASK_SIZE * 2 + LEVEL2_LOCK_ARRAY_SIZE;
     /// Total size of level 1 internal node
-    const uint64_t LEVEL1_TOTAL_SIZE = LEVEL1_sSIZE + LEVEL1_MASK_SIZE * 2;
+    const uint64_t LEVEL1_TOTAL_SIZE = LEVEL1_sSIZE + LEVEL1_MASK_SIZE * 2 + LEVEL1_LOCK_ARRAY_SIZE;
     /// Total size of leaf node
     const uint64_t LEVEL0_TOTAL_SIZE = LEVEL0_sSIZE + LEVEL0_MASK_SIZE;
 
