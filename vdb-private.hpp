@@ -52,6 +52,7 @@ void VDB<level0, level1, level2>::initialize_vdb_storage()
     memset(vdb_storage_, 0, total_storage_size_ * sizeof(InternalData));
 }
 
+// TODO: Make access safe with concurrent access and insertion by adding spin locks
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 double VDB<level0, level1, level2>::random_access(const Coord xyz)
 {
@@ -148,7 +149,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     InternalData index = get_node_from_hashmap(xyz);
     if (index.tile_or_value == BACKGROUND_VALUE) {
         // Node does not exist, insert into hashmap to update parent
-        uint64_t result = insert_node_into_hashmap(xyz, num_elements_);
+        uint64_t result = insert_node_into_hashmap(xyz);
         if (result == 0) {
             std::cout << "Not enough room in hashtable, exiting" << std::endl;
             exit(EXIT_FAILURE);
@@ -189,7 +190,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
         if (old_lock_val == READY) {
             uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL1_TOTAL_SIZE);
             internal_node_index_2.index = old_num_elements;
-            uint64_t constant = 1 << mask_offset;
+            uint64_t constant = 1LLU << mask_offset;
             __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
             __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
             *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = READY;
@@ -230,7 +231,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
         if (old_lock_val == READY) {
             uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL0_TOTAL_SIZE);
             internal_node_index_1.index = old_num_elements;
-            uint64_t constant = 1 << mask_offset;
+            uint64_t constant = 1LLU << mask_offset;
             __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
             __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
             *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = READY;
@@ -252,7 +253,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
     uint64_t value_mask_offset = leaf_offset % INTERNAL_DATA_SIZE;
     // Multiple threads can update this, the last update wins
     leaf_node_index.tile_or_value = value;
-    uint64_t constant = 1 << value_mask_offset;
+    uint64_t constant = 1LLU << value_mask_offset;
     __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
     return true;
 }
@@ -260,7 +261,7 @@ bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
 {
-    std::array<int, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
+    std::array<uint64_t, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
     uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);
     uint64_t compressed_xyz = xyz.get_compressed_coord(LEVEL2_sLOG2);
     uint64_t size_of_axis = 20 - LEVEL2_sLOG2; // Likely 8
@@ -272,9 +273,13 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
             uint64_t compressed_xyz_index = vdb_storage_[index].index;
             if (((compressed_xyz_index >> amount_to_pad) << amount_to_pad) ==
                 ((compressed_xyz >> amount_to_pad) << amount_to_pad)) {
+                // TODO: Fix ugly hack
+                uint64_t mask = (1LLU << amount_to_pad) - 1;
+                while((vdb_storage_[index].index & mask) == mask);
+
                 // Extract last 40 bits
                 InternalData ret;
-                ret.index = compressed_xyz_index & ((1LU << amount_to_pad) - 1);
+                ret.index = (vdb_storage_[index].index) & ((1LLU << amount_to_pad) - 1);
                 return ret;
             }
         }
@@ -285,15 +290,14 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
-uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, uint64_t num_elements)
+uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz)
 {
-    std::array<int, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
+    std::array<uint64_t, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
     uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);
     uint64_t compressed_xyz = xyz.get_compressed_coord(LEVEL2_sLOG2);
     // Compress coord with num_elements
     uint64_t size_of_axis = 20 - LEVEL2_sLOG2; // Likely 8
     uint64_t amount_to_pad = 64 - (size_of_axis * 3); // Likely 40
-    uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + num_elements;
     for (uint64_t i = HASHMAP_START; i < HASHMAP_START + HASHMAP_SIZE; ++i) {
         uint64_t index = (hash + i * i) % HASHMAP_SIZE;
         uint64_t expected(std::numeric_limits<uint64_t>::max());
@@ -304,15 +308,16 @@ uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz, 
         if (old_val == expected) {
             // Atomically update vdb_storage index
             uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL2_TOTAL_SIZE);
-            // TODO: Double check compressed_xyz_index contains old_num_elements
+            // TODO: Since other threads update num_elements_, passed num_elems is stale
             // Atomically exchange storage value. compressed_xyz_index contains old_num_elements
+            uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + old_num_elements;
             __sync_lock_test_and_set(reinterpret_cast<uint64_t*>(vdb_storage_+index), compressed_xyz_index);
             return old_num_elements;
         }
         // Spin if we should be storing a value but another thread is.
         if (((old_val >> amount_to_pad) << amount_to_pad) ==
             ((compressed_xyz >> amount_to_pad) << amount_to_pad)) {
-            uint64_t mask = (1LU << amount_to_pad) - 1;
+            uint64_t mask = (1LLU << amount_to_pad) - 1;
             while ((old_val & mask) == mask) {
                 // TODO: thread fence
                 old_val = vdb_storage_[index].index;
@@ -339,19 +344,19 @@ uint64_t VDB<level0, level1, level2>::calculate_internal_offset(const Coord xyz,
             childSLog2 = LEVEL0_sLOG2;
     }
     uint64_t internalOffset =
-          (((xyz.x_ & (1LU << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
-          (((xyz.y_ & (1LU << sLog2) - 1) >> childSLog2) << log2) +
-           ((xyz.z_ & (1LU << sLog2) - 1) >> childSLog2);
+          (((xyz.x_ & (1LLU << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
+          (((xyz.y_ & (1LLU << sLog2) - 1) >> childSLog2) << log2) +
+           ((xyz.z_ & (1LLU << sLog2) - 1) >> childSLog2);
     return internalOffset;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 uint64_t VDB<level0, level1, level2>::calculate_leaf_offset(const Coord xyz) {
     uint64_t leafOffset =
-          ((xyz.x_ & (1LU << LEVEL0_sLOG2) - 1)
+          ((xyz.x_ & (1LLU << LEVEL0_sLOG2) - 1)
                 << (LEVEL0_LOG2 + LEVEL0_LOG2)) +
-          ((xyz.y_ & (1LU << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
-           (xyz.z_ & (1LU << LEVEL0_sLOG2) - 1);
+          ((xyz.y_ & (1LLU << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
+           (xyz.z_ & (1LLU << LEVEL0_sLOG2) - 1);
     return leafOffset;
 }
 

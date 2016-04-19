@@ -1,6 +1,7 @@
 #include "vdb.hpp"
 #include <iostream>
 #include <random>
+//#include <omp.h>
 
 int main() {
     // Init RNG
@@ -11,11 +12,12 @@ int main() {
     std::random_device rand_dev;
     std::mt19937 rand_engine(rand_dev());
 
-    VDB<3, 4, 5> vdb_square(256*256*256, 2000, 10.0);
-    // pragma omp parallal for collapse(3)
-    for (size_t i = 0; i < 16; ++i) {
-        for (size_t j = 0; j < 16; ++j) {
-            for (size_t k = 0; k < 16; ++k) {
+    VDB<3, 4, 5> vdb_square(1000*256*256, 2000, 10.0);
+    //omp_set_num_threads(24);
+    //#pragma omp parallel for collapse(3)
+    for (size_t i = 1; i < 20; ++i) {
+        for (size_t j = 1; j < 24; ++j) {
+            for (size_t k = 0; k < 23; ++k) {
                 const Coord coord(i, j, k);
                 double val = dist(rand_engine);
                 vdb_square.random_insert(coord, val);
