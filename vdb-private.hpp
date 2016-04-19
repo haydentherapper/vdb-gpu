@@ -344,19 +344,19 @@ uint64_t VDB<level0, level1, level2>::calculate_internal_offset(const Coord xyz,
             childSLog2 = LEVEL0_sLOG2;
     }
     uint64_t internalOffset =
-          (((xyz.x_ & (1LLU << sLog2) - 1) >> childSLog2) << (log2 + log2)) +
-          (((xyz.y_ & (1LLU << sLog2) - 1) >> childSLog2) << log2) +
-           ((xyz.z_ & (1LLU << sLog2) - 1) >> childSLog2);
+          (((xyz.x_ & ((1LLU << sLog2) - 1)) >> childSLog2) << (log2 + log2)) +
+          (((xyz.y_ & ((1LLU << sLog2) - 1)) >> childSLog2) << log2) +
+           ((xyz.z_ & ((1LLU << sLog2) - 1)) >> childSLog2);
     return internalOffset;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 uint64_t VDB<level0, level1, level2>::calculate_leaf_offset(const Coord xyz) {
     uint64_t leafOffset =
-          ((xyz.x_ & (1LLU << LEVEL0_sLOG2) - 1)
+          ((xyz.x_ & ((1LLU << LEVEL0_sLOG2) - 1))
                 << (LEVEL0_LOG2 + LEVEL0_LOG2)) +
-          ((xyz.y_ & (1LLU << LEVEL0_sLOG2) - 1) << LEVEL0_LOG2) +
-           (xyz.z_ & (1LLU << LEVEL0_sLOG2) - 1);
+          ((xyz.y_ & ((1LLU << LEVEL0_sLOG2) - 1)) << LEVEL0_LOG2) +
+           (xyz.z_ & ((1LLU << LEVEL0_sLOG2) - 1));
     return leafOffset;
 }
 
