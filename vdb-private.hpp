@@ -142,119 +142,33 @@ double VDB<level0, level1, level2>::random_access(const Coord xyz)
     return leaf_node_index.tile_or_value;
 }
 
+// TODO: Use __atomic builtin instead of __sync
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
 {
     // First, get index to internal node or background
-    InternalData index = get_node_from_hashmap(xyz);
-    if (index.tile_or_value == BACKGROUND_VALUE) {
+    InternalData hashmap_index = get_node_from_hashmap(xyz);
+    if (hashmap_index.tile_or_value == BACKGROUND_VALUE) {
         // Node does not exist, insert into hashmap to update parent
         uint64_t result = insert_node_into_hashmap(xyz);
         if (result == 0) {
             std::cout << "Not enough room in hashtable, exiting" << std::endl;
             exit(EXIT_FAILURE);
         }
-        index.index = result;
+        hashmap_index.index = result;
     }
 
-    // Pointer to first index into internal data array
-    InternalData* internal_node_array_pointer = vdb_storage_ + index.index;
-    uint64_t internal_offset = calculate_internal_offset(xyz, level2_node);
-    InternalData& internal_node_index_2 =
-        *(internal_node_array_pointer + internal_offset);
-    InternalData* value_mask = internal_node_array_pointer +
-                               // Length of node array
-                               LEVEL2_sSIZE;
-    InternalData* child_mask = internal_node_array_pointer +
-                               // Length of node array
-                               LEVEL2_sSIZE +
-                               // Length of value mask
-                               LEVEL2_MASK_SIZE;
-   InternalData* lock_flag_array = internal_node_array_pointer +
-                              // Length of node array
-                              LEVEL2_sSIZE +
-                              // Length of value mask
-                              LEVEL2_MASK_SIZE +
-                              // Length of child mask
-                              LEVEL2_MASK_SIZE;
-    value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    lock_flag_array += internal_offset / NUM_LOCK_FLAGS;
+    // Insert for level 2 internal node
+    InternalData level2_index;
+    level2_index.index = insert_internal_node(xyz, hashmap_index.index, level2_node);
 
-    InternalData& child_mask_chunk_2 = *child_mask;
-    uint64_t mask_offset = internal_offset % INTERNAL_DATA_SIZE;
-    uint64_t lock_offset = internal_offset % NUM_LOCK_FLAGS;
-    if (!extract_bit(child_mask_chunk_2.index, mask_offset)) {
-        // No internal node child, add an internal node
-        uint8_t old_lock_val = __sync_lock_test_and_set(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, IP);
-        if (old_lock_val == READY) {
-            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL1_TOTAL_SIZE);
-            internal_node_index_2.index = old_num_elements;
-            uint64_t constant = 1LLU << mask_offset;
-            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
-            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
-            *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = READY;
-        } // Else, allocation already in progress
-    } // Else, spin until ready
-    while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) == IP);
+    // Recurse for level 1 internal node
+    InternalData level1_index;
+    level1_index.index = insert_internal_node(xyz, level2_index.index, level1_node);
 
-    // Recurse on level 1 internal node
-    index.index = internal_node_index_2.index;
-    internal_node_array_pointer = vdb_storage_ + index.index;
-    internal_offset = calculate_internal_offset(xyz, level1_node);
-    InternalData& internal_node_index_1 = *(internal_node_array_pointer + internal_offset);
-    value_mask = internal_node_array_pointer +
-                               // Length of node array
-                               LEVEL1_sSIZE;
-    child_mask = internal_node_array_pointer +
-               // Length of node array
-               LEVEL1_sSIZE +
-               // Length of value mask
-               LEVEL1_MASK_SIZE;
-   lock_flag_array = internal_node_array_pointer +
-              // Length of node array
-              LEVEL1_sSIZE +
-              // Length of value mask
-              LEVEL1_MASK_SIZE +
-              // Length of child mask
-              LEVEL1_MASK_SIZE;
-    value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    lock_flag_array += internal_offset / NUM_LOCK_FLAGS;
+    // Set value in leaf node
+    insert_leaf_node(xyz, level1_index.index, value);
 
-    InternalData& child_mask_chunk_1 = *child_mask;
-    mask_offset = internal_offset % INTERNAL_DATA_SIZE;
-    lock_offset = internal_offset % NUM_LOCK_FLAGS;
-    if (!extract_bit(child_mask_chunk_1.index, mask_offset)) {
-        // No leaf node child, add a leaf node
-        uint8_t old_lock_val = __sync_lock_test_and_set(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, IP);
-        if (old_lock_val == READY) {
-            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL0_TOTAL_SIZE);
-            internal_node_index_1.index = old_num_elements;
-            uint64_t constant = 1LLU << mask_offset;
-            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
-            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
-            *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = READY;
-        } // Else, allocation already in progress
-    } // Else, spin until ready
-    while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) == IP);
-
-    // Extract index to leaf node
-    uint64_t leaf_pointer_index = internal_node_index_1.index;
-    InternalData* leaf_node_array_pointer = vdb_storage_ + leaf_pointer_index;
-    uint64_t leaf_offset = calculate_leaf_offset(xyz);
-    InternalData& leaf_node_index =
-        *(leaf_node_array_pointer + leaf_offset);
-    // Isn't currently used, tracks active states
-    value_mask = leaf_node_array_pointer +
-                       // Length of node array
-                       LEVEL0_sSIZE;
-    value_mask += leaf_offset / INTERNAL_DATA_SIZE;
-    uint64_t value_mask_offset = leaf_offset % INTERNAL_DATA_SIZE;
-    // Multiple threads can update this, the last update wins
-    leaf_node_index.tile_or_value = value;
-    uint64_t constant = 1LLU << value_mask_offset;
-    __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
     return true;
 }
 
@@ -287,6 +201,90 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
     InternalData ret;
     ret.tile_or_value = BACKGROUND_VALUE;
     return ret;
+}
+
+template<uint64_t level0, uint64_t level1, uint64_t level2>
+uint64_t VDB<level0, level1, level2>::insert_internal_node(const Coord xyz, uint64_t index, InternalNodeLevel inl)
+{
+    uint64_t size;
+    uint64_t mask_size;
+    uint64_t total_size;
+    switch (inl) {
+        case level2_node:
+            size = LEVEL2_sSIZE;
+            mask_size = LEVEL2_MASK_SIZE;
+            total_size = LEVEL1_TOTAL_SIZE;
+            break;
+        case level1_node:
+            size = LEVEL1_sSIZE;
+            mask_size = LEVEL1_MASK_SIZE;
+            total_size = LEVEL0_TOTAL_SIZE;
+            break;
+    }
+
+    // Pointer to first index into internal data array
+    InternalData* internal_node_array_pointer = vdb_storage_ + index;
+    uint64_t internal_offset = calculate_internal_offset(xyz, inl);
+    InternalData& internal_node_index =
+        *(internal_node_array_pointer + internal_offset);
+    InternalData* value_mask = internal_node_array_pointer +
+                               // Length of node array
+                               size;
+    InternalData* child_mask = internal_node_array_pointer +
+                               // Length of node array
+                               size +
+                               // Length of value mask
+                               mask_size;
+   InternalData* lock_flag_array = internal_node_array_pointer +
+                              // Length of node array
+                              size +
+                              // Length of value mask
+                              mask_size +
+                              // Length of child mask
+                              mask_size;
+    value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
+    child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
+    lock_flag_array += internal_offset / NUM_LOCK_FLAGS;
+
+    InternalData child_mask_chunk = *child_mask;
+    uint64_t mask_offset = internal_offset % INTERNAL_DATA_SIZE;
+    uint64_t lock_offset = internal_offset % NUM_LOCK_FLAGS;
+    if (!extract_bit(child_mask_chunk.index, mask_offset)) {
+        // No internal node child, add an internal node
+        uint8_t old_lock_val = __sync_lock_test_and_set(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, IP);
+        if (old_lock_val == READY) {
+            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, total_size);
+            internal_node_index.index = old_num_elements;
+            uint64_t constant = 1LLU << mask_offset;
+            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
+            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
+            *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = READY;
+        } // Else, allocation already in progress
+    } // Else, spin until ready
+    while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) == IP);
+
+    // Return old_num_elements to be used in next iteration
+   return internal_node_index.index;
+}
+
+template<uint64_t level0, uint64_t level1, uint64_t level2>
+void VDB<level0, level1, level2>::insert_leaf_node(const Coord xyz, uint64_t index, double value)
+{
+    uint64_t leaf_pointer_index = index;
+    InternalData* leaf_node_array_pointer = vdb_storage_ + leaf_pointer_index;
+    uint64_t leaf_offset = calculate_leaf_offset(xyz);
+    InternalData& leaf_node_index =
+        *(leaf_node_array_pointer + leaf_offset);
+    // Isn't currently used, tracks active states
+    InternalData* value_mask = leaf_node_array_pointer +
+                       // Length of node array
+                       LEVEL0_sSIZE;
+    value_mask += leaf_offset / INTERNAL_DATA_SIZE;
+    uint64_t value_mask_offset = leaf_offset % INTERNAL_DATA_SIZE;
+    // Multiple threads can update this, the last update wins
+    leaf_node_index.tile_or_value = value;
+    uint64_t constant = 1LLU << value_mask_offset;
+    __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
@@ -336,12 +334,16 @@ uint64_t VDB<level0, level1, level2>::calculate_internal_offset(const Coord xyz,
     uint64_t log2;
     uint64_t childSLog2;
     switch (inl) {
-        case level2_node: sLog2 = LEVEL2_sLOG2;
+        case level2_node:
+            sLog2 = LEVEL2_sLOG2;
             log2 = LEVEL2_LOG2;
             childSLog2 = LEVEL1_sLOG2;
-        case level1_node: sLog2 = LEVEL1_sLOG2;
+            break;
+        case level1_node:
+            sLog2 = LEVEL1_sLOG2;
             log2 = LEVEL1_LOG2;
             childSLog2 = LEVEL0_sLOG2;
+            break;
     }
     uint64_t internalOffset =
           (((xyz.x_ & ((1LLU << sLog2) - 1)) >> childSLog2) << (log2 + log2)) +

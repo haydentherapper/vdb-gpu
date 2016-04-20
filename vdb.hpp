@@ -120,6 +120,12 @@ private:
     /// Inserts internal node index into hashmap atomically
     uint64_t insert_node_into_hashmap(const Coord xyz);
 
+    /// Inserts internal node or leaf node index into tree atomically
+    uint64_t insert_internal_node(const Coord xyz, uint64_t index, InternalNodeLevel inl);
+
+    /// Inserts value at leaf node
+    void insert_leaf_node(const Coord xyz, uint64_t index, double value);
+
     /// Returns index into internal node array
     uint64_t calculate_internal_offset(const Coord xyz, InternalNodeLevel inl);
 

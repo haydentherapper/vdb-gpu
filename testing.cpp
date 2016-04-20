@@ -14,7 +14,7 @@ int main() {
 
     VDB<3, 4, 5> vdb_square(1000*256*256, 2000, 10.0);
     //omp_set_num_threads(24);
-    //#pragma omp parallel for collapse(3)
+    //#pragma omp parallel for collapse(3) shared(vdb_square)
     for (size_t i = 1; i < 20; ++i) {
         for (size_t j = 1; j < 24; ++j) {
             for (size_t k = 0; k < 23; ++k) {
