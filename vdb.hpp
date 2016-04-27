@@ -5,7 +5,6 @@
  * \author Hayden Blauzvern
  */
 
-
 #ifndef VDB_HPP_INCLUDED
 #define VDB_HPP_INCLUDED
 
@@ -14,14 +13,14 @@
 #include "coord.hpp"
 
 union InternalData {
-    uint64_t index; // Index into vdb storage
-    double tile_or_value; // Tile or Value
-    uint8_t lock_flags[sizeof(double)]; // Locks for node insertion
+    uint64_t index;                      // Index into vdb storage
+    double tile_or_value;                // Tile or Value
+    uint8_t lock_flags[sizeof(double)];  // Locks for node insertion
 };
 
-template<uint64_t level0, uint64_t level1, uint64_t level2>
+template <uint64_t level0, uint64_t level1, uint64_t level2>
 class VDB {
-public:
+   public:
     enum InternalNodeLevel { level2_node, level1_node };
 
     const uint8_t READY = 0;
@@ -68,9 +67,11 @@ public:
     const uint64_t LEVEL1_LOCK_ARRAY_SIZE = LEVEL1_sSIZE / NUM_LOCK_FLAGS;
 
     /// Total size of level 2 internal node
-    const uint64_t LEVEL2_TOTAL_SIZE = LEVEL2_sSIZE + LEVEL2_MASK_SIZE * 2 + LEVEL2_LOCK_ARRAY_SIZE;
+    const uint64_t LEVEL2_TOTAL_SIZE =
+        LEVEL2_sSIZE + LEVEL2_MASK_SIZE * 2 + LEVEL2_LOCK_ARRAY_SIZE;
     /// Total size of level 1 internal node
-    const uint64_t LEVEL1_TOTAL_SIZE = LEVEL1_sSIZE + LEVEL1_MASK_SIZE * 2 + LEVEL1_LOCK_ARRAY_SIZE;
+    const uint64_t LEVEL1_TOTAL_SIZE =
+        LEVEL1_sSIZE + LEVEL1_MASK_SIZE * 2 + LEVEL1_LOCK_ARRAY_SIZE;
     /// Total size of leaf node
     const uint64_t LEVEL0_TOTAL_SIZE = LEVEL0_sSIZE + LEVEL0_MASK_SIZE;
 
@@ -107,31 +108,36 @@ public:
     /// Random insert into VDB
     bool random_insert(const Coord xyz, double value);
 
-private:
+   private:
     /// Initializes hashmap with uint64_t max
     void initialize_hashmap();
 
     /// Initializes vdb_storage_ with 0
     void initialize_vdb_storage();
 
-    /// Gets index to internal node array from hashmap.
-    /// Will return null if no node exists at coordinates
+    /// Gets index to internal node array from hashmap
+    /// Will return background value if no node exists at coordinate
     InternalData get_internal_node_from_hashmap(const Coord xyz);
 
-    /// Access internal node for a given coordinate
-    InternalData get_internal_or_leaf_node(const Coord xyz, uint64_t index, bool* is_tile, InternalNodeLevel inl);
+    /// Access node for a given coordinate
+    /// is_tile is set when return value is a tile value
+    InternalData get_internal_or_leaf_node(const Coord xyz, uint64_t index,
+                                           bool* is_tile,
+                                           InternalNodeLevel inl);
 
-    /// Access leaf node for a given coordinate
+    /// Access value at leaf node for a given coordinate
     double get_value_from_leaf_node(const Coord xyz, uint64_t index);
 
     /// Inserts internal node index into hashmap atomically
     uint64_t insert_internal_node_into_hashmap(const Coord xyz);
 
     /// Inserts internal node or leaf node index into tree atomically
-    uint64_t insert_internal_or_leaf_node(const Coord xyz, uint64_t index, InternalNodeLevel inl);
+    uint64_t insert_internal_or_leaf_node(const Coord xyz, uint64_t index,
+                                          InternalNodeLevel inl);
 
     /// Inserts value at leaf node
-    void insert_value_into_leaf_node(const Coord xyz, uint64_t index, double value);
+    void insert_value_into_leaf_node(const Coord xyz, uint64_t index,
+                                     double value);
 
     /// Returns index into internal node array
     uint64_t calculate_internal_offset(const Coord xyz, InternalNodeLevel inl);
