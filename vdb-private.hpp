@@ -264,17 +264,17 @@ uint64_t VDB<level0, level1, level2>::insert_internal_node(const Coord xyz, uint
     uint64_t lock_offset = internal_offset % NUM_LOCK_FLAGS;
     if (!extract_bit(child_mask_chunk.index, mask_offset)) {
         // No internal node child, add an internal node
-        uint8_t old_lock_val = __sync_lock_test_and_set(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, IP);
+        uint8_t old_lock_val = __atomic_exchange_n(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, IP, __ATOMIC_SEQ_CST);
         if (old_lock_val == READY) {
-            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, total_size);
+            uint64_t old_num_elements = __atomic_fetch_add(&num_elements_, total_size, __ATOMIC_SEQ_CST);
             internal_node_index.index = old_num_elements;
             uint64_t constant = 1LLU << mask_offset;
-            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
-            __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
+            __atomic_fetch_or(reinterpret_cast<uint64_t*>(value_mask), constant, __ATOMIC_SEQ_CST);
+            __atomic_fetch_or(reinterpret_cast<uint64_t*>(child_mask), constant, __ATOMIC_SEQ_CST);
             *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = DONE;
         } // Else, allocation already in progress
         if (old_lock_val == DONE) {
-            __sync_lock_test_and_set(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, DONE);
+            __atomic_exchange_n(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, DONE, __ATOMIC_SEQ_CST);
         }
     } // Else, spin until ready
     while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) != DONE);
@@ -300,7 +300,7 @@ void VDB<level0, level1, level2>::insert_leaf_node(const Coord xyz, uint64_t ind
     // Multiple threads can update this, the last update wins
     leaf_node_index.tile_or_value = value;
     uint64_t constant = 1LLU << value_mask_offset;
-    __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
+    __atomic_fetch_or(reinterpret_cast<uint64_t*>(value_mask), constant, __ATOMIC_SEQ_CST);
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
@@ -315,16 +315,18 @@ uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz)
     for (uint64_t i = HASHMAP_START; i < HASHMAP_START + HASHMAP_SIZE; ++i) {
         uint64_t index = (hash + i * i) % HASHMAP_SIZE;
         uint64_t expected(std::numeric_limits<uint64_t>::max());
+        uint64_t old_val(std::numeric_limits<uint64_t>::max());
         // Use gcc builtin CAS. We must cast the union for the CAS to work.
         // Atomically update storage. We place a temporary value as a lock.
-        uint64_t old_val = __sync_val_compare_and_swap(reinterpret_cast<uint64_t*>(vdb_storage_+index), expected, compressed_xyz);
+        __atomic_compare_exchange_n(reinterpret_cast<uint64_t*>(vdb_storage_+index), &old_val, compressed_xyz,
+                                                false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
         // Update index
         if (old_val == expected) {
             // Atomically update vdb_storage index
-            uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL2_TOTAL_SIZE);
+            uint64_t old_num_elements = __atomic_fetch_add(&num_elements_, LEVEL2_TOTAL_SIZE, __ATOMIC_SEQ_CST);
             // Atomically exchange storage value. compressed_xyz_index contains old_num_elements
             uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + old_num_elements;
-            __sync_lock_test_and_set(reinterpret_cast<uint64_t*>(vdb_storage_+index), compressed_xyz_index);
+            __atomic_exchange_n(reinterpret_cast<uint64_t*>(vdb_storage_+index), compressed_xyz_index, __ATOMIC_SEQ_CST);
             return old_num_elements;
         }
         // Spin if we should be storing a value but another thread is.
