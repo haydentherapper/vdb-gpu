@@ -65,6 +65,20 @@ double VDB<level0, level1, level2>::random_access(const Coord xyz)
     // Pointer to first index into internal data array
     InternalData* internal_node_array_pointer = vdb_storage_ + index.index;
     uint64_t internal_offset = calculate_internal_offset(xyz, level2_node);
+
+    // Spin until ready
+    // TODO: Spin at leaf and level 1
+    // InternalData* lock_flag_array = internal_node_array_pointer +
+    //                            // Length of node array
+    //                            LEVEL2_sSIZE +
+    //                            // Length of value mask
+    //                            LEVEL2_MASK_SIZE +
+    //                            // Length of child mask
+    //                            LEVEL2_MASK_SIZE;
+    // lock_flag_array += internal_offset / NUM_LOCK_FLAGS;
+    // uint64_t lock_offset = internal_offset % NUM_LOCK_FLAGS;
+    // while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) == IP);
+
     InternalData internal_node_index =
         *(internal_node_array_pointer + internal_offset);
 
@@ -142,7 +156,6 @@ double VDB<level0, level1, level2>::random_access(const Coord xyz)
     return leaf_node_index.tile_or_value;
 }
 
-// TODO: Use __atomic builtin instead of __sync
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
 {
@@ -306,7 +319,6 @@ uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz)
         if (old_val == expected) {
             // Atomically update vdb_storage index
             uint64_t old_num_elements = __sync_fetch_and_add(&num_elements_, LEVEL2_TOTAL_SIZE);
-            // TODO: Since other threads update num_elements_, passed num_elems is stale
             // Atomically exchange storage value. compressed_xyz_index contains old_num_elements
             uint64_t compressed_xyz_index = ((compressed_xyz >> amount_to_pad) << amount_to_pad) + old_num_elements;
             __sync_lock_test_and_set(reinterpret_cast<uint64_t*>(vdb_storage_+index), compressed_xyz_index);
@@ -317,7 +329,7 @@ uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz)
             ((compressed_xyz >> amount_to_pad) << amount_to_pad)) {
             uint64_t mask = (1LLU << amount_to_pad) - 1;
             while ((old_val & mask) == mask) {
-                // TODO: thread fence
+                // TODO: Add thread fence
                 old_val = vdb_storage_[index].index;
             }
             return (old_val & mask);

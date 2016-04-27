@@ -14,12 +14,12 @@
 
 struct Coord {
 
-    int x_, y_, z_;
+    uint64_t x_, y_, z_;
 
     Coord() = delete;
 
     // Constructor
-    Coord(const int x, const int y, const int z) :
+    Coord(const uint64_t x, const uint64_t y, const uint64_t z) :
         x_(x), y_(y), z_(z) {
         // Nothing
     }
@@ -36,7 +36,7 @@ struct Coord {
         uint64_t amount_to_pad = 64 - (size_of_axis * 3); // Likely 40
         uint64_t padding = (1LLU << amount_to_pad) - 1;
         // Each coordinate is at most 2^20, so right-shift by compressed
-        return ((x_ >> compressed) << (amount_to_pad + size_of_axis * 2)) +
+        return ((x_ >> compressed) << (amount_to_pad + size_of_axis * 2LLU)) +
                ((y_ >> compressed) << (amount_to_pad + size_of_axis)) +
                ((z_ >> compressed) << amount_to_pad) +
                padding;
