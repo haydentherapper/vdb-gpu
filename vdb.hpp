@@ -26,6 +26,7 @@ public:
 
     const uint8_t READY = 0;
     const uint8_t IP = 1;
+    const uint8_t DONE = 2;
 
     const size_t total_storage_size_;
     InternalData* vdb_storage_;

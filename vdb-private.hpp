@@ -271,13 +271,16 @@ uint64_t VDB<level0, level1, level2>::insert_internal_node(const Coord xyz, uint
             uint64_t constant = 1LLU << mask_offset;
             __sync_fetch_and_or(reinterpret_cast<uint64_t*>(value_mask), constant);
             __sync_fetch_and_or(reinterpret_cast<uint64_t*>(child_mask), constant);
-            *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = READY;
+            *(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) = DONE;
         } // Else, allocation already in progress
+        if (old_lock_val == DONE) {
+            __sync_lock_test_and_set(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset, DONE);
+        }
     } // Else, spin until ready
-    while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) == IP);
+    while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) != DONE);
 
     // Return old_num_elements to be used in next iteration
-   return internal_node_index.index;
+    return internal_node_index.index;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
