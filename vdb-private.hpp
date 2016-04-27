@@ -52,141 +52,62 @@ void VDB<level0, level1, level2>::initialize_vdb_storage()
     memset(vdb_storage_, 0, total_storage_size_ * sizeof(InternalData));
 }
 
-// TODO: Make access safe with concurrent access and insertion by adding spin locks
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 double VDB<level0, level1, level2>::random_access(const Coord xyz)
 {
     // Index to internal node or background
-    InternalData index = get_node_from_hashmap(xyz);
-    if (index.tile_or_value == BACKGROUND_VALUE) {
-        return index.tile_or_value;
+    InternalData node_from_hashmap = get_internal_node_from_hashmap(xyz);
+    if (node_from_hashmap.tile_or_value == BACKGROUND_VALUE) {
+        return node_from_hashmap.tile_or_value;
     }
 
-    // Pointer to first index into internal data array
-    InternalData* internal_node_array_pointer = vdb_storage_ + index.index;
-    uint64_t internal_offset = calculate_internal_offset(xyz, level2_node);
-
-    // Spin until ready
-    // TODO: Spin at leaf and level 1
-    // InternalData* lock_flag_array = internal_node_array_pointer +
-    //                            // Length of node array
-    //                            LEVEL2_sSIZE +
-    //                            // Length of value mask
-    //                            LEVEL2_MASK_SIZE +
-    //                            // Length of child mask
-    //                            LEVEL2_MASK_SIZE;
-    // lock_flag_array += internal_offset / NUM_LOCK_FLAGS;
-    // uint64_t lock_offset = internal_offset % NUM_LOCK_FLAGS;
-    // while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) == IP);
-
-    InternalData internal_node_index =
-        *(internal_node_array_pointer + internal_offset);
-
-    // Check value mask to see if node exists
-    InternalData* value_mask = internal_node_array_pointer +
-                               // Length of node array
-                               LEVEL2_sSIZE;
-    value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    InternalData value_mask_chunk = *value_mask;
-    uint64_t value_mask_offset = internal_offset % INTERNAL_DATA_SIZE;
-    if (!extract_bit(value_mask_chunk.index, value_mask_offset)) {
-        // If value_mask not set, return background
-        return BACKGROUND_VALUE;
+    bool is_tile_level2(false);
+    InternalData internal_node_level2 = get_internal_or_leaf_node(xyz, node_from_hashmap.index, &is_tile_level2, level2_node);
+    if (internal_node_level2.tile_or_value == BACKGROUND_VALUE || is_tile_level2) {
+        return internal_node_level2.tile_or_value;
     }
 
-    InternalData* child_mask = internal_node_array_pointer +
-                               // Length of node array
-                               LEVEL2_sSIZE +
-                               // Length of value mask
-                               LEVEL2_MASK_SIZE;
-    child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    InternalData child_mask_chunk = *child_mask;
-
-    uint64_t child_mask_offset = internal_offset % INTERNAL_DATA_SIZE;
-    if (!extract_bit(child_mask_chunk.index, child_mask_offset)) {
-        // Return tile value
-        return internal_node_index.tile_or_value;
+    bool is_tile_level1(false);
+    InternalData internal_node_level1 = get_internal_or_leaf_node(xyz, internal_node_level2.index, &is_tile_level1, level1_node);
+    if (internal_node_level1.tile_or_value == BACKGROUND_VALUE || is_tile_level1) {
+        return internal_node_level1.tile_or_value;
     }
 
-    // Recurse on level 1 internal node
-    index.index = internal_node_index.index;
-    internal_node_array_pointer = vdb_storage_ + index.index;
-    internal_offset = calculate_internal_offset(xyz, level1_node);
-    internal_node_index = *(internal_node_array_pointer + internal_offset);
-    value_mask = internal_node_array_pointer +
-                 // Length of node array
-                 LEVEL1_sSIZE;
-    value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    value_mask_chunk = *value_mask;
-    value_mask_offset = internal_offset % INTERNAL_DATA_SIZE;
-    if (!extract_bit(value_mask_chunk.index, value_mask_offset)) {
-        // If value_mask not set, return background
-        return BACKGROUND_VALUE;
-    }
-    child_mask = internal_node_array_pointer +
-               // Length of node array
-               LEVEL1_sSIZE +
-               // Length of value mask
-               LEVEL1_MASK_SIZE;
-    child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
-    child_mask_chunk = *child_mask;
-    child_mask_offset = internal_offset % INTERNAL_DATA_SIZE;
-    if (!extract_bit(child_mask_chunk.index, child_mask_offset)) {
-        // Return tile value
-        return internal_node_index.tile_or_value;
-    }
-
-    // Extract index to leaf node
-    uint64_t leaf_pointer_index = internal_node_index.index;
-    InternalData* leaf_node_array_pointer = vdb_storage_ + leaf_pointer_index;
-    uint64_t leaf_offset = calculate_leaf_offset(xyz);
-    InternalData leaf_node_index =
-        *(leaf_node_array_pointer + leaf_offset);
-    // Isn't currently used, tracks active states
-    value_mask = leaf_node_array_pointer +
-                 // Length of node array
-                 LEVEL0_sSIZE;
-    value_mask += leaf_offset / INTERNAL_DATA_SIZE;
-    value_mask_chunk = *value_mask;
-    value_mask_offset = leaf_offset % INTERNAL_DATA_SIZE;
-    if (!extract_bit(value_mask_chunk.index, value_mask_offset)) {
-        return BACKGROUND_VALUE;
-    }
-    // Return voxel value
-    return leaf_node_index.tile_or_value;
+    double value = get_value_from_leaf_node(xyz, internal_node_level1.index);
+    return value;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
 bool VDB<level0, level1, level2>::random_insert(const Coord xyz, double value)
 {
     // First, get index to internal node or background
-    InternalData hashmap_index = get_node_from_hashmap(xyz);
-    if (hashmap_index.tile_or_value == BACKGROUND_VALUE) {
+    InternalData node_from_hashmap = get_internal_node_from_hashmap(xyz);
+    if (node_from_hashmap.tile_or_value == BACKGROUND_VALUE) {
         // Node does not exist, insert into hashmap to update parent
-        uint64_t result = insert_node_into_hashmap(xyz);
+        uint64_t result = insert_internal_node_into_hashmap(xyz);
         if (result == 0) {
             std::cout << "Not enough room in hashtable, exiting" << std::endl;
             exit(EXIT_FAILURE);
         }
-        hashmap_index.index = result;
+        node_from_hashmap.index = result;
     }
 
     // Insert for level 2 internal node
     InternalData level2_index;
-    level2_index.index = insert_internal_node(xyz, hashmap_index.index, level2_node);
+    level2_index.index = insert_internal_or_leaf_node(xyz, node_from_hashmap.index, level2_node);
 
     // Recurse for level 1 internal node
     InternalData level1_index;
-    level1_index.index = insert_internal_node(xyz, level2_index.index, level1_node);
+    level1_index.index = insert_internal_or_leaf_node(xyz, level2_index.index, level1_node);
 
     // Set value in leaf node
-    insert_leaf_node(xyz, level1_index.index, value);
+    insert_value_into_leaf_node(xyz, level1_index.index, value);
 
     return true;
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
-InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
+InternalData VDB<level0, level1, level2>::get_internal_node_from_hashmap(const Coord xyz)
 {
     std::array<uint64_t, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
     uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);
@@ -217,7 +138,94 @@ InternalData VDB<level0, level1, level2>::get_node_from_hashmap(const Coord xyz)
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
-uint64_t VDB<level0, level1, level2>::insert_internal_node(const Coord xyz, uint64_t index, InternalNodeLevel inl)
+InternalData VDB<level0, level1, level2>::get_internal_or_leaf_node(const Coord xyz, uint64_t index, bool* is_tile, InternalNodeLevel inl)
+{
+    uint64_t size;
+    uint64_t mask_size;
+    switch (inl) {
+        case level2_node:
+            size = LEVEL2_sSIZE;
+            mask_size = LEVEL2_MASK_SIZE;
+            break;
+        case level1_node:
+            size = LEVEL1_sSIZE;
+            mask_size = LEVEL1_MASK_SIZE;
+            break;
+    }
+
+    // Pointer to first index into internal data array
+    InternalData* internal_node_array_pointer = vdb_storage_ + index;
+    uint64_t internal_offset = calculate_internal_offset(xyz, inl);
+
+    // Spin until ready
+    InternalData* lock_flag_array = internal_node_array_pointer +
+                               // Length of node array
+                               size +
+                               // Length of value mask
+                               mask_size +
+                               // Length of child mask
+                               mask_size;
+    lock_flag_array += internal_offset / NUM_LOCK_FLAGS;
+    uint64_t lock_offset = internal_offset % NUM_LOCK_FLAGS;
+    while(*(reinterpret_cast<uint8_t*>(lock_flag_array) + lock_offset) != DONE);
+
+    InternalData internal_node_index =
+        *(internal_node_array_pointer + internal_offset);
+
+    // Check value mask to see if node exists
+    InternalData* value_mask = internal_node_array_pointer +
+                               // Length of node array
+                               size;
+    value_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
+    InternalData value_mask_chunk = *value_mask;
+    uint64_t value_mask_offset = internal_offset % INTERNAL_DATA_SIZE;
+    if (!extract_bit(value_mask_chunk.index, value_mask_offset)) {
+        // If value_mask not set, return background
+        InternalData ret;
+        ret.tile_or_value = BACKGROUND_VALUE;
+        return ret;
+    }
+
+    InternalData* child_mask = internal_node_array_pointer +
+                               // Length of node array
+                               size +
+                               // Length of value mask
+                               mask_size;
+    child_mask += internal_offset / INTERNAL_DATA_SIZE; // vdb_storage index
+    InternalData child_mask_chunk = *child_mask;
+
+    uint64_t child_mask_offset = internal_offset % INTERNAL_DATA_SIZE;
+    if (!extract_bit(child_mask_chunk.index, child_mask_offset)) {
+        // Returned value will be interpreted as tile
+        *is_tile = true;
+    }
+
+    // Return index or tile, set with boolean flag
+    return internal_node_index;
+}
+
+template<uint64_t level0, uint64_t level1, uint64_t level2>
+double VDB<level0, level1, level2>::get_value_from_leaf_node(const Coord xyz, uint64_t index)
+{
+    InternalData* leaf_node_array_pointer = vdb_storage_ + index;
+    uint64_t leaf_offset = calculate_leaf_offset(xyz);
+    InternalData leaf_node_index = *(leaf_node_array_pointer + leaf_offset);
+    // Value mask tracks active states
+    InternalData* value_mask = leaf_node_array_pointer +
+                               // Length of node array
+                               LEVEL0_sSIZE;
+    value_mask += leaf_offset / INTERNAL_DATA_SIZE;
+    InternalData value_mask_chunk = *value_mask;
+    uint64_t value_mask_offset = leaf_offset % INTERNAL_DATA_SIZE;
+    if (!extract_bit(value_mask_chunk.index, value_mask_offset)) {
+        return BACKGROUND_VALUE;
+    }
+    // Return voxel value
+    return leaf_node_index.tile_or_value;
+}
+
+template<uint64_t level0, uint64_t level1, uint64_t level2>
+uint64_t VDB<level0, level1, level2>::insert_internal_or_leaf_node(const Coord xyz, uint64_t index, InternalNodeLevel inl)
 {
     uint64_t size;
     uint64_t mask_size;
@@ -284,7 +292,7 @@ uint64_t VDB<level0, level1, level2>::insert_internal_node(const Coord xyz, uint
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
-void VDB<level0, level1, level2>::insert_leaf_node(const Coord xyz, uint64_t index, double value)
+void VDB<level0, level1, level2>::insert_value_into_leaf_node(const Coord xyz, uint64_t index, double value)
 {
     uint64_t leaf_pointer_index = index;
     InternalData* leaf_node_array_pointer = vdb_storage_ + leaf_pointer_index;
@@ -304,7 +312,7 @@ void VDB<level0, level1, level2>::insert_leaf_node(const Coord xyz, uint64_t ind
 }
 
 template<uint64_t level0, uint64_t level1, uint64_t level2>
-uint64_t VDB<level0, level1, level2>::insert_node_into_hashmap(const Coord xyz)
+uint64_t VDB<level0, level1, level2>::insert_internal_node_into_hashmap(const Coord xyz)
 {
     std::array<uint64_t, 3> rootkey = xyz.get_rootkey(LEVEL2_sLOG2);
     uint64_t hash = Coord::hash(rootkey, HASHMAP_LOG_SIZE);

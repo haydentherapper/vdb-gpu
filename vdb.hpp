@@ -116,16 +116,22 @@ private:
 
     /// Gets index to internal node array from hashmap.
     /// Will return null if no node exists at coordinates
-    InternalData get_node_from_hashmap(const Coord xyz);
+    InternalData get_internal_node_from_hashmap(const Coord xyz);
+
+    /// Access internal node for a given coordinate
+    InternalData get_internal_or_leaf_node(const Coord xyz, uint64_t index, bool* is_tile, InternalNodeLevel inl);
+
+    /// Access leaf node for a given coordinate
+    double get_value_from_leaf_node(const Coord xyz, uint64_t index);
 
     /// Inserts internal node index into hashmap atomically
-    uint64_t insert_node_into_hashmap(const Coord xyz);
+    uint64_t insert_internal_node_into_hashmap(const Coord xyz);
 
     /// Inserts internal node or leaf node index into tree atomically
-    uint64_t insert_internal_node(const Coord xyz, uint64_t index, InternalNodeLevel inl);
+    uint64_t insert_internal_or_leaf_node(const Coord xyz, uint64_t index, InternalNodeLevel inl);
 
     /// Inserts value at leaf node
-    void insert_leaf_node(const Coord xyz, uint64_t index, double value);
+    void insert_value_into_leaf_node(const Coord xyz, uint64_t index, double value);
 
     /// Returns index into internal node array
     uint64_t calculate_internal_offset(const Coord xyz, InternalNodeLevel inl);
