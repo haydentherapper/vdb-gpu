@@ -1,32 +1,53 @@
 #include <iostream>
 #include <random>
 #include "vdb.hpp"
-//#include <omp.h>
 
-int main() {
-    // Init RNG
-    // From http://stackoverflow.com/questions/21102105/random-double-c11
-    const double lower_bound = -255;
-    const double upper_bound = 255;
-    std::uniform_real_distribution<double> dist(lower_bound, upper_bound);
-    std::random_device rand_dev;
-    std::mt19937 rand_engine(rand_dev());
+#include <Kokkos_Core.hpp>
 
-    VDB<3, 4, 5> vdb_square(1000 * 256 * 256, 2000, 10.0);
-    // omp_set_num_threads(24);
-    //#pragma omp parallel for collapse(3) shared(vdb_square)
-    for (size_t i = 1; i < 20; ++i) {
-        for (size_t j = 1; j < 24; ++j) {
-            for (size_t k = 0; k < 23; ++k) {
-                const Coord coord(i, j, k);
-                double val = dist(rand_engine);
-                vdb_square.random_insert(coord, val);
-                double result = vdb_square.random_access(coord);
-                if (val != result) {
-                    std::cout << i << ' ' << j << ' ' << k << ' ' << result
-                              << std::endl;
-                }
-            }
-        }
-    }
+KOKKOS_INLINE_FUNCTION
+void
+convertSingleIndexToThree(const size_t pointIndex,
+                          const size_t N_J,
+                          const size_t N_K,
+                          size_t* i,
+                          size_t* j,
+                          size_t* k) {
+  *i = pointIndex / (N_J * N_K);
+  *j = (pointIndex - *i * N_J * N_K) / N_K;
+  *k = pointIndex % N_K;
+}
+
+int main(int argc, char** argv) {
+    Kokkos::initialize(argc, argv);
+
+    const size_t VDB_SIZE = 1000 * 256 * 256;
+    const size_t VDB_HASH_MAP_SIZE = 2000;
+    const double VDB_BACKGROUND_VALUE = 10.0;
+    VDB<3, 4, 5> vdb_square(VDB_SIZE, VDB_HASH_MAP_SIZE, VDB_BACKGROUND_VALUE);
+
+    const size_t N_I = 20;
+    const size_t N_J = 21;
+    const size_t N_K = 22;
+    Kokkos::parallel_for(
+        N_I * N_J * N_K,
+        KOKKOS_LAMBDA (const size_t pointIndex) {
+          size_t i;
+          size_t j;
+          size_t k;
+          convertSingleIndexToThree(pointIndex, N_J, N_K,
+                                    &i, &j, &k);
+          const Coord coord(i, j, k);
+          double val = i * 10000 + j * 100 + k;
+          vdb_square.random_insert(coord, val);
+          double result = vdb_square.random_access(coord);
+          if (val != result) {
+              printf("discrepancy at (%2zu, %2zu, %2zu), "
+                     "expected %9.4lf but got %9.4lf\n",
+                     i, j, k, val, result);
+          }
+        });
+
+    printf("finished, finalizing, ignore the strange error message "
+           "after this.\n");
+    Kokkos::finalize();
 }

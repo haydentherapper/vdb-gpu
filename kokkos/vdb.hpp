@@ -12,6 +12,8 @@
 
 #include "coord.hpp"
 
+#include <Kokkos_Core.hpp>
+
 union InternalData {
     uint64_t index;                      // Index into vdb storage
     double tile_or_value;                // Tile or Value
@@ -28,7 +30,7 @@ class VDB {
     const uint8_t DONE = 2;
 
     const size_t total_storage_size_;
-    InternalData* vdb_storage_;
+    Kokkos::View<InternalData*> vdb_storage_;
 
     /// Leaf node single-axis  log size (x, y, and z)
     const uint64_t LEVEL0_LOG2 = level0;
@@ -85,28 +87,28 @@ class VDB {
     const double BACKGROUND_VALUE;
 
     /// Keeps track of how many internal datas have been "allocated"
-    uint64_t num_elements_;
+    Kokkos::View<uint64_t> num_elements_;
 
     /// Disabled default constructor
     VDB() = delete;
 
     /// Constructor with memory size parameter
-    VDB(uint64_t mem_size, uint64_t hashmap_size, double background);
+    VDB(size_t mem_size, uint64_t hashmap_size, double background);
 
     /// Destructor
     ~VDB();
 
     /// Disabled copy constructor
-    VDB(VDB& other) = delete;
+    //VDB(VDB& other) = delete;
 
     /// Disabled assignment operator.
     VDB& operator=(VDB& rhs) = delete;
 
     /// Random access into VDB
-    double random_access(const Coord xyz);
+    double random_access(const Coord xyz) const;
 
     /// Random insert into VDB
-    bool random_insert(const Coord xyz, double value);
+    bool random_insert(const Coord xyz, double value) const;
 
    private:
     /// Initializes hashmap with uint64_t max
@@ -117,33 +119,33 @@ class VDB {
 
     /// Gets index to internal node array from hashmap
     /// Will return background value if no node exists at coordinate
-    InternalData get_internal_node_from_hashmap(const Coord xyz);
+    InternalData get_internal_node_from_hashmap(const Coord xyz) const;
 
     /// Access node for a given coordinate
     /// is_tile is set when return value is a tile value
     InternalData get_internal_or_leaf_node(const Coord xyz, uint64_t index,
                                            bool* is_tile,
-                                           InternalNodeLevel inl);
+                                           InternalNodeLevel inl) const;
 
     /// Access value at leaf node for a given coordinate
-    double get_value_from_leaf_node(const Coord xyz, uint64_t index);
+    double get_value_from_leaf_node(const Coord xyz, uint64_t index) const;
 
     /// Inserts internal node index into hashmap atomically
-    uint64_t insert_internal_node_into_hashmap(const Coord xyz);
+    uint64_t insert_internal_node_into_hashmap(const Coord xyz) const;
 
     /// Inserts internal node or leaf node index into tree atomically
     uint64_t insert_internal_or_leaf_node(const Coord xyz, uint64_t index,
-                                          InternalNodeLevel inl);
+                                          InternalNodeLevel inl) const;
 
     /// Inserts value at leaf node
     void insert_value_into_leaf_node(const Coord xyz, uint64_t index,
-                                     double value);
+                                     double value) const;
 
     /// Returns index into internal node array
-    uint64_t calculate_internal_offset(const Coord xyz, InternalNodeLevel inl);
+    uint64_t calculate_internal_offset(const Coord xyz, InternalNodeLevel inl) const;
 
     /// Returns index into leaf node array
-    uint64_t calculate_leaf_offset(const Coord xyz);
+    uint64_t calculate_leaf_offset(const Coord xyz) const;
 };
 
 #include "vdb-private.hpp"
